@@ -48,6 +48,9 @@ wget -q http://nami.jp/ipv4bycc/cidr.txt.gz
 gzip -d -c cidr.txt.gz > ${IP_LIST}
 rm -f cidr.txt.gz
 
+echo ">>> Updating deny_ip list..."
+wget -q -O /root/deny_ip https://raw.githubusercontent.com/mutyuns/MyBlockScript-and-IP/main/deny_ip
+
 # --- ホワイトリスト ---
 ipset create whitelist hash:net
 ipset add whitelist 127.0.0.1/24
