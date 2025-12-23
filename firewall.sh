@@ -5,6 +5,7 @@
 #---------------------------------------#
 ALLOW_FILE="/root/allow_ip"
 DENY_FILE="/root/deny_ip"
+# ブロックしたい国コード
 DROP_COUNTRY_LIST=("CN" "RU" "KR" "NK")
 IP_LIST="/tmp/cidr.txt"
 
@@ -42,17 +43,18 @@ ipset destroy 2>/dev/null
 #---------------------------------------#
 echo ">>> Configuring IP Sets..."
 
-# リスト取得
+# CIDRリスト取得
 rm -f ${IP_LIST}
 wget -q http://nami.jp/ipv4bycc/cidr.txt.gz
 gzip -d -c cidr.txt.gz > ${IP_LIST}
 rm -f cidr.txt.gz
 
+# ユーザー定義deny_ipの更新
 echo ">>> Updating deny_ip list..."
 wget -q -O /root/deny_ip https://raw.githubusercontent.com/mutyuns/MyBlockScript-and-IP/main/deny_ip
 
-# --- ホワイトリスト ---
-ipset create whitelist hash:net
+# --- [A] ホワイトリスト作成 ---
+ipset create whitelist hash:net hashsize 1024 maxelem 65536
 ipset add whitelist 127.0.0.1/24
 ipset add whitelist 10.0.0.0/8
 ipset add whitelist 172.16.0.0/12
@@ -64,9 +66,10 @@ if [ -f "${ALLOW_FILE}" ]; then
     done
 fi
 
-# --- ブラックリスト ---
-echo "  - Building blacklist..."
-ipset create blacklist hash:net
+# --- [B] ブラックリスト作成 (ユーザー定義用) ---
+echo "  - Building blacklist (User Defined)..."
+# ユーザー定義用なので標準サイズでOK
+ipset create blacklist hash:net hashsize 4096 maxelem 200000
 
 if [ -f "${DENY_FILE}" ]; then
     grep -vE "^#|^$" "${DENY_FILE}" | while read -r ip; do
@@ -74,8 +77,14 @@ if [ -f "${DENY_FILE}" ]; then
     done
 fi
 
+# --- [C] カントリーブロック作成 (国別大量データ用) ---
+echo "  - Building countryblock (GeoIP)..."
+# 国別データは膨大になるので maxelem を大きく取る(100万件)
+ipset create countryblock hash:net hashsize 4096 maxelem 1000000
+
 for country in "${DROP_COUNTRY_LIST[@]}"; do
-    grep "^${country}" ${IP_LIST} | awk '{print "add blacklist " $2 " -exist"}' | ipset restore
+    # ここで blacklist ではなく countryblock に追加する
+    grep "^${country}" ${IP_LIST} | awk '{print "add countryblock " $2 " -exist"}' | ipset restore
 done
 
 #---------------------------------------#
@@ -87,8 +96,13 @@ echo ">>> Applying iptables rules..."
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 
-# ipsetフィルタリング
+# ★ipsetフィルタリング (ここを変更)
+# 1. ユーザー定義のブラックリストを拒否
 iptables -A INPUT -m set --match-set blacklist src -j DROP
+# 2. 国別のカントリーブロックを拒否
+iptables -A INPUT -m set --match-set countryblock src -j DROP
+
+# ホワイトリスト許可
 iptables -A INPUT -p tcp --dport 10022 -m set --match-set whitelist src -j ACCEPT
 iptables -A INPUT -p tcp --dport 9090 -m set --match-set whitelist src -j ACCEPT
 
@@ -107,23 +121,21 @@ iptables -P INPUT DROP
 iptables -P FORWARD DROP
 
 #---------------------------------------#
-# 4. 設定の保存と永続化設定 (★ここが修正のキモ)
+# 4. 設定の保存と永続化設定
 #---------------------------------------#
 echo ">>> Saving configurations..."
 
-# 1. 現在の設定をファイルに書き出す
+# 1. 現在の設定をファイルに書き出す (全セットが含まれます)
 ipset save > ${IPSET_SAVE_FILE}
 iptables-save > ${IPTABLES_SAVE_FILE}
 
 # 2. 標準サービスを起動リストから外す
-# (タイミング問題の原因になるため、これらは使いません)
 rc-update del ipset default 2>/dev/null || true
 rc-update del ipset boot 2>/dev/null || true
 rc-update del iptables default 2>/dev/null || true
 rc-update del iptables boot 2>/dev/null || true
 
 # 3. local.d 起動スクリプトを作成
-# Alpineでは /etc/local.d/*.start が起動時に実行されます
 echo ">>> Setting up persistent boot script in /etc/local.d/..."
 
 cat <<EOF > /etc/local.d/firewall.start
@@ -152,8 +164,9 @@ EOF
 # 実行権限を付与
 chmod +x /etc/local.d/firewall.start
 
-# 4. localサービスを有効化 (これが起動時に上記スクリプトを実行します)
+# 4. localサービスを有効化
 rc-update add local default
 
-echo ">>> SUCCESS! Firewall configured using local.d persistence."
+echo ">>> SUCCESS! Firewall configured."
+echo "Check lists with: ipset list blacklist / ipset list countryblock"
 echo "Please reboot to verify."
