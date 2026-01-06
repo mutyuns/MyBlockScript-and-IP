@@ -28,6 +28,8 @@ if ! ping -c 1 8.8.8.8 &> /dev/null; then
     exit 1
 fi
 
+dos2unix allow_ip
+dos2unix deny_ip
 # 既存の設定を全クリア
 rc-service iptables stop 2>/dev/null
 rc-service ipset stop 2>/dev/null
