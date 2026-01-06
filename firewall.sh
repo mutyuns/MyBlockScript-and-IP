@@ -98,17 +98,17 @@ echo ">>> Applying iptables rules..."
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 
+# ホワイトリスト許可
+iptables -A INPUT -p tcp --dport 10022 -m set --match-set whitelist src -j ACCEPT
+iptables -A INPUT -p tcp --dport 9090 -m set --match-set whitelist src -j ACCEPT
+
 # ★ipsetフィルタリング (ここを変更)
 # 1. ユーザー定義のブラックリストを拒否
 iptables -A INPUT -m set --match-set blacklist src -j DROP
 # 2. 国別のカントリーブロックを拒否
 iptables -A INPUT -m set --match-set countryblock src -j DROP
 
-# ホワイトリスト許可
-iptables -A INPUT -p tcp --dport 10022 -m set --match-set whitelist src -j ACCEPT
-iptables -A INPUT -p tcp --dport 9090 -m set --match-set whitelist src -j ACCEPT
-
-# Web公開
+#3 Web公開
 iptables -A INPUT -p tcp --dport 80 -j ACCEPT
 iptables -A INPUT -p tcp --dport 443 -j ACCEPT
 iptables -A INPUT -p udp --dport 443 -j ACCEPT
